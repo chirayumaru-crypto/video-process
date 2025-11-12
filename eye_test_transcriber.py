@@ -3,14 +3,17 @@ from moviepy.editor import VideoFileClip
 import openai
 import tempfile
 import re
+import os
+from dotenv import load_dotenv
+
+# Load environment variables from .env (or use Streamlit secrets)
+load_dotenv()
+openai.api_key = os.getenv("OPENAI_API_KEY")  # Or use st.secrets["OPENAI_API_KEY"]
 
 st.set_page_config(page_title="AI Eye-Test Video Transcriber", layout="centered")
 
 st.title("👁️ AI Eye-Test Video Transcriber")
 st.caption("Upload your MP4 eye-test recording to auto-generate a cleaned, labeled `.vtt` transcript.")
-
-# Input OpenAI API key securely
-openai.api_key = st.text_input("🔑 Enter your OpenAI API Key", type="password")
 
 # Upload video
 uploaded_video = st.file_uploader("🎞️ Upload Eye-Test Video (MP4)", type=["mp4"])
@@ -27,7 +30,7 @@ if uploaded_video and openai.api_key:
         temp_audio = tempfile.NamedTemporaryFile(delete=False, suffix=".wav")
         video.audio.write_audiofile(temp_audio.name, verbose=False, logger=None)
 
-        # Step 3: Transcribe using OpenAI Whisper (updated API)
+        # Step 3: Transcribe using OpenAI Whisper (latest API)
         with open(temp_audio.name, "rb") as f:
             transcript = openai.audio.transcriptions.create(
                 model="whisper-1",
@@ -91,4 +94,4 @@ if uploaded_video and openai.api_key:
         st.text_area("🧾 Transcript Preview", final_vtt[:3000], height=300)
 
 else:
-    st.info("⬆️ Upload an MP4 file and enter your API key to begin.")
+    st.info("⬆️ Upload an MP4 file to begin. Make sure your OpenAI API key is set in `.env` or Streamlit secrets.")
