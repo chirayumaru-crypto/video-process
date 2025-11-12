@@ -1,12 +1,12 @@
 import streamlit as st
 from moviepy.editor import VideoFileClip
-import openai
+from openai import OpenAI
 import tempfile
 import re
 import os
 
-# Use Streamlit secrets for OpenAI API key
-openai.api_key = st.secrets["OPENAI_API_KEY"]
+# Initialize OpenAI client with API key from Streamlit secrets
+client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
 
 st.set_page_config(page_title="AI Eye-Test Video Transcriber", layout="centered")
 
@@ -17,23 +17,28 @@ uploaded_video = st.file_uploader("🎞️ Upload Eye-Test Video (MP4)", type=["
 
 if uploaded_video:
     with st.spinner("⏳ Extracting audio and processing..."):
+        # Step 1. Save uploaded video temporarily
         temp_video = tempfile.NamedTemporaryFile(delete=False, suffix=".mp4")
         temp_video.write(uploaded_video.read())
         temp_video.close()
 
+        # Step 2. Extract audio
         video = VideoFileClip(temp_video.name)
         temp_audio = tempfile.NamedTemporaryFile(delete=False, suffix=".wav")
         video.audio.write_audiofile(temp_audio.name, verbose=False, logger=None)
 
-        # Corrected transcription call
+        # Step 3. Transcribe using new OpenAI client syntax
         with open(temp_audio.name, "rb") as f:
-            transcript = openai.Audio.transcriptions.create(
+            transcript = client.audio.transcriptions.create(
                 model="whisper-1",
                 file=f,
                 response_format="vtt"
             )
 
-        # Clean text
+        # transcript is a string when response_format="vtt"
+        vtt_text = transcript
+
+        # Step 4. Clean and correct text
         def clean_spoken_text(line):
             if not line or "-->" in line or line.strip() == "WEBVTT":
                 return line
@@ -56,10 +61,10 @@ if uploaded_video:
                 line = re.sub(pattern, repl, line, flags=re.IGNORECASE)
             return re.sub(r"\s+", " ", line).strip()
 
-        corrected_lines = [clean_spoken_text(l) for l in transcript.splitlines()]
+        corrected_lines = [clean_spoken_text(l) for l in vtt_text.splitlines()]
         cleaned_vtt = "\n".join(corrected_lines)
 
-        # Label speakers
+        # Step 5. Label speakers alternately
         def label_speakers(vtt_text):
             blocks = vtt_text.split("\n\n")
             labeled_blocks = []
@@ -77,6 +82,7 @@ if uploaded_video:
 
         final_vtt = label_speakers(cleaned_vtt)
 
+        # Step 6. Display & Download
         st.success("✅ Transcription complete!")
         st.download_button(
             "💾 Download Cleaned Transcript (.vtt)",
