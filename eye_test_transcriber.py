@@ -4,41 +4,36 @@ import openai
 import tempfile
 import re
 import os
-from dotenv import load_dotenv
 
-# Load environment variables from .env (or use Streamlit secrets)
-load_dotenv()
-openai.api_key = os.getenv("OPENAI_API_KEY")  # Or use st.secrets["OPENAI_API_KEY"]
+# Use Streamlit secrets for OpenAI API key
+openai.api_key = st.secrets["OPENAI_API_KEY"]
 
 st.set_page_config(page_title="AI Eye-Test Video Transcriber", layout="centered")
 
 st.title("👁️ AI Eye-Test Video Transcriber")
 st.caption("Upload your MP4 eye-test recording to auto-generate a cleaned, labeled `.vtt` transcript.")
 
-# Upload video
 uploaded_video = st.file_uploader("🎞️ Upload Eye-Test Video (MP4)", type=["mp4"])
 
-if uploaded_video and openai.api_key:
+if uploaded_video:
     with st.spinner("⏳ Extracting audio and processing..."):
-        # Step 1: Save uploaded file temporarily
         temp_video = tempfile.NamedTemporaryFile(delete=False, suffix=".mp4")
         temp_video.write(uploaded_video.read())
         temp_video.close()
 
-        # Step 2: Extract audio from video
         video = VideoFileClip(temp_video.name)
         temp_audio = tempfile.NamedTemporaryFile(delete=False, suffix=".wav")
         video.audio.write_audiofile(temp_audio.name, verbose=False, logger=None)
 
-        # Step 3: Transcribe using OpenAI Whisper (latest API)
+        # Corrected transcription call
         with open(temp_audio.name, "rb") as f:
-            transcript = openai.audio.transcriptions.create(
+            transcript = openai.Audio.transcriptions.create(
                 model="whisper-1",
                 file=f,
                 response_format="vtt"
             )
 
-        # Step 4: Clean and correct spoken text
+        # Clean text
         def clean_spoken_text(line):
             if not line or "-->" in line or line.strip() == "WEBVTT":
                 return line
@@ -64,7 +59,7 @@ if uploaded_video and openai.api_key:
         corrected_lines = [clean_spoken_text(l) for l in transcript.splitlines()]
         cleaned_vtt = "\n".join(corrected_lines)
 
-        # Step 5: Add speaker labels
+        # Label speakers
         def label_speakers(vtt_text):
             blocks = vtt_text.split("\n\n")
             labeled_blocks = []
@@ -82,7 +77,6 @@ if uploaded_video and openai.api_key:
 
         final_vtt = label_speakers(cleaned_vtt)
 
-        # Step 6: Display & Download
         st.success("✅ Transcription complete!")
         st.download_button(
             "💾 Download Cleaned Transcript (.vtt)",
@@ -94,4 +88,4 @@ if uploaded_video and openai.api_key:
         st.text_area("🧾 Transcript Preview", final_vtt[:3000], height=300)
 
 else:
-    st.info("⬆️ Upload an MP4 file to begin. Make sure your OpenAI API key is set in `.env` or Streamlit secrets.")
+    st.info("⬆️ Upload an MP4 file to begin. Make sure your OpenAI API key is set in Streamlit Secrets.")
