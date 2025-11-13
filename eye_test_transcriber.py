@@ -11,7 +11,9 @@ if not api_key:
     st.error("🚨 Missing OpenAI API key in Streamlit secrets.toml!")
     st.stop()
 
-client = OpenAI(api_key=api_key)
+# ✅ Fix: set env variable instead of passing in constructor
+os.environ["OPENAI_API_KEY"] = api_key
+client = OpenAI()
 
 st.set_page_config(page_title="AI Eye-Test Video Transcriber", layout="centered")
 st.title("👁️ AI Eye-Test Video Transcriber")
@@ -21,17 +23,14 @@ uploaded_video = st.file_uploader("🎞️ Upload Eye-Test Video (MP4)", type=["
 
 if uploaded_video:
     with st.spinner("⏳ Extracting audio and transcribing..."):
-        # Save uploaded video
         temp_video = tempfile.NamedTemporaryFile(delete=False, suffix=".mp4")
         temp_video.write(uploaded_video.read())
         temp_video.close()
 
-        # Extract audio from video
         video = VideoFileClip(temp_video.name)
         temp_audio = tempfile.NamedTemporaryFile(delete=False, suffix=".wav")
         video.audio.write_audiofile(temp_audio.name, verbose=False, logger=None)
 
-        # Transcribe using Whisper
         with open(temp_audio.name, "rb") as f:
             transcript = client.audio.transcriptions.create(
                 model="whisper-1",
@@ -39,7 +38,6 @@ if uploaded_video:
                 response_format="vtt"
             )
 
-        # Clean the VTT transcript
         def clean_spoken_text(line):
             if not line or "-->" in line or line.strip() == "WEBVTT":
                 return line
@@ -65,7 +63,6 @@ if uploaded_video:
         cleaned_lines = [clean_spoken_text(l) for l in transcript.splitlines()]
         cleaned_vtt = "\n".join(cleaned_lines)
 
-        # Label speakers alternately
         def label_speakers(vtt_text):
             blocks = vtt_text.split("\n\n")
             labeled_blocks = []
@@ -83,7 +80,6 @@ if uploaded_video:
 
         final_vtt = label_speakers(cleaned_vtt)
 
-        # Download & preview
         st.success("✅ Transcription complete!")
         st.download_button(
             "💾 Download Cleaned Transcript (.vtt)",
