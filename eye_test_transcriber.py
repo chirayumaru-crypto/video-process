@@ -15,7 +15,7 @@ if not api_key:
 os.environ["OPENAI_API_KEY"] = api_key
 client = OpenAI()
 
-st.set_page_config(page_title="AI Eye-Test Video Transcriber", layout="centered")
+st.set_page_config(page_title="Eye-Test Video Transcriber", layout="centered")
 st.title("👁️ AI Eye-Test Video Transcriber")
 st.caption("Upload an MP4 eye-test video and get an auto-corrected `.vtt` transcript.")
 
@@ -92,3 +92,4 @@ if uploaded_video:
 
 else:
     st.info("⬆️ Upload an MP4 file to start processing.")
+
