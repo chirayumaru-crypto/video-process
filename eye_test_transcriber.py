@@ -1,95 +1,108 @@
-import streamlit as st
-from moviepy.editor import VideoFileClip
-from openai import OpenAI
-import tempfile
-import re
 import os
+import time
+import math
+import tempfile
+import streamlit as st
+from openai import OpenAI, RateLimitError
+from moviepy.editor import VideoFileClip
 
-# Initialize client safely
-api_key = st.secrets.get("OPENAI_API_KEY")
-if not api_key:
-    st.error("🚨 Missing OpenAI API key in Streamlit secrets.toml!")
-    st.stop()
-
-# ✅ Fix: set env variable instead of passing in constructor
-os.environ["OPENAI_API_KEY"] = api_key
+# Initialize OpenAI client
 client = OpenAI()
 
-st.set_page_config(page_title="Eye-Test Video Transcriber", layout="centered")
-st.title("👁️ AI Eye-Test Video Transcriber")
-st.caption("Upload an MP4 eye-test video and get an auto-corrected `.vtt` transcript.")
+# -----------------------------
+# Utility Functions
+# -----------------------------
+def split_video(file_path, chunk_duration=60):
+    """Split video into chunks (in seconds). Returns list of chunk file paths."""
+    video = VideoFileClip(file_path)
+    duration = video.duration
+    chunks = []
 
-uploaded_video = st.file_uploader("🎞️ Upload Eye-Test Video (MP4)", type=["mp4"])
+    st.info(f"Total video length: {math.ceil(duration)} seconds. Splitting into chunks...")
 
-if uploaded_video:
-    with st.spinner("⏳ Extracting audio and transcribing..."):
-        temp_video = tempfile.NamedTemporaryFile(delete=False, suffix=".mp4")
-        temp_video.write(uploaded_video.read())
-        temp_video.close()
+    with tempfile.TemporaryDirectory() as tmpdir:
+        for i in range(0, math.ceil(duration), chunk_duration):
+            start = i
+            end = min(i + chunk_duration, duration)
+            chunk_file = os.path.join(tmpdir, f"chunk_{i//chunk_duration}.mp4")
+            video.subclip(start, end).write_videofile(chunk_file, codec="libx264", audio_codec="aac", verbose=False, logger=None)
+            chunks.append(chunk_file)
+        return chunks
 
-        video = VideoFileClip(temp_video.name)
-        temp_audio = tempfile.NamedTemporaryFile(delete=False, suffix=".wav")
-        video.audio.write_audiofile(temp_audio.name, verbose=False, logger=None)
 
-        with open(temp_audio.name, "rb") as f:
-            transcript = client.audio.transcriptions.create(
-                model="whisper-1",
-                file=f,
-                response_format="vtt"
-            )
+def transcribe_with_retry(file_path, max_retries=5):
+    """Transcribe a single audio/video file with retry on rate limit."""
+    for attempt in range(max_retries):
+        try:
+            with open(file_path, "rb") as f:
+                transcript = client.audio.transcriptions.create(
+                    model="whisper-1",
+                    file=f,
+                    response_format="vtt"
+                )
+            return transcript
+        except RateLimitError:
+            wait_time = (2 ** attempt) * 5  # exponential backoff
+            st.warning(f"⚠️ Rate limit hit. Retrying in {wait_time} seconds...")
+            time.sleep(wait_time)
+        except Exception as e:
+            st.error(f"❌ Transcription failed: {e}")
+            return None
+    st.error("❌ Max retries exceeded. Please try again later.")
+    return None
 
-        def clean_spoken_text(line):
-            if not line or "-->" in line or line.strip() == "WEBVTT":
-                return line
 
-            replacements = {
-                r"\buh+\b": "",
-                r"\bum+\b": "",
-                r"\bhai\b": "yes",
-                r"\bokey+\b": "okay",
-                r"\bma\b": "now",
-                r"\bll\b": "will",
-                r"\byaa+\b": "yeah",
-                r"\btru+\b": "true",
-                r"\bclrear\b": "clear",
-                r"\bplaese\b": "please",
-                r"\btets\b": "test",
-                r"\bey\b": "eye"
-            }
-            for pattern, repl in replacements.items():
-                line = re.sub(pattern, repl, line, flags=re.IGNORECASE)
-            return re.sub(r"\s+", " ", line).strip()
+def combine_vtt(transcripts):
+    """Combine multiple VTT transcripts into one."""
+    combined = "WEBVTT\n\n"
+    for t in transcripts:
+        if not t:
+            continue
+        # Remove duplicate WEBVTT headers
+        cleaned = t.replace("WEBVTT", "").strip()
+        combined += cleaned + "\n\n"
+    return combined
 
-        cleaned_lines = [clean_spoken_text(l) for l in transcript.splitlines()]
-        cleaned_vtt = "\n".join(cleaned_lines)
 
-        def label_speakers(vtt_text):
-            blocks = vtt_text.split("\n\n")
-            labeled_blocks = []
-            speaker_toggle = True
-            for block in blocks:
-                if "-->" in block:
-                    speaker = "Optometrist" if speaker_toggle else "Patient"
-                    speaker_toggle = not speaker_toggle
-                    parts = block.split("\n")
-                    if len(parts) > 1:
-                        parts[-1] = f"{speaker}: {parts[-1]}"
-                    block = "\n".join(parts)
-                labeled_blocks.append(block)
-            return "\n\n".join(labeled_blocks)
+# -----------------------------
+# Streamlit UI
+# -----------------------------
+st.set_page_config(page_title="Eye Test Video Transcriber", page_icon="👁️", layout="centered")
 
-        final_vtt = label_speakers(cleaned_vtt)
+st.title("👁️ Eye Test Video Transcriber")
+st.markdown("Upload an **MP4 eye test video** to get the transcribed text (as `.vtt` subtitle file).")
 
-        st.success("✅ Transcription complete!")
+uploaded_file = st.file_uploader("🎥 Upload your Eye Test Video", type=["mp4"])
+
+if uploaded_file:
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as tmpfile:
+        tmpfile.write(uploaded_file.read())
+        video_path = tmpfile.name
+
+    st.info("📽 Processing video... please wait ⏳")
+    chunks = split_video(video_path)
+
+    all_transcripts = []
+    progress = st.progress(0)
+    total = len(chunks)
+
+    for i, chunk_path in enumerate(chunks):
+        st.write(f"🎧 Transcribing chunk {i+1}/{total}...")
+        transcript = transcribe_with_retry(chunk_path)
+        all_transcripts.append(transcript)
+        progress.progress((i + 1) / total)
+
+    if all_transcripts:
+        final_vtt = combine_vtt(all_transcripts)
+        output_file = os.path.splitext(uploaded_file.name)[0] + "_transcript.vtt"
+
+        st.success("✅ Transcription completed successfully!")
         st.download_button(
-            "💾 Download Cleaned Transcript (.vtt)",
+            label="⬇️ Download VTT File",
             data=final_vtt,
-            file_name="eye_test_transcript.vtt",
+            file_name=output_file,
             mime="text/vtt"
         )
-
-        st.text_area("🧾 Transcript Preview", final_vtt[:3000], height=300)
-
-else:
-    st.info("⬆️ Upload an MP4 file to start processing.")
-
+        st.balloons()
+    else:
+        st.error("❌ No transcription output generated.")
